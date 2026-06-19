@@ -18,14 +18,19 @@ import {
   CheckCircle2,
   Sparkles,
   RefreshCw,
+  Package,
+  ChevronDown,
+  Clock,
+  XCircle,
 } from 'lucide-react';
 import {
   useAppStore,
   selectAllSentences,
+  selectUnassignedCount,
 } from '@/store/useAppStore';
 import { CHARACTER_LIST, VOICE_STYLES, SENTENCE_TYPE_META } from '@/constants/characters';
 import { cn } from '@/lib/utils';
-import type { Sentence } from '@/types';
+import type { Sentence, Chapter, CharacterVoice } from '@/types';
 import {
   speakSentence,
   cancelSpeak,
@@ -37,8 +42,11 @@ import {
   exportDubbListCSV,
   exportDubbMarkdown,
   exportSummaryReport,
+  computeDeliverySummary,
 } from '@/utils/export';
 import { estimateReadTime, formatDuration } from '@/utils/helpers';
+import DeliveryDialog from '@/components/export/DeliveryDialog';
+import { useNavigate } from 'react-router-dom';
 
 export default function ExportPage() {
   const chapters = useAppStore((s) => s.chapters);
@@ -50,15 +58,29 @@ export default function ExportPage() {
   const toggleReread = useAppStore((s) => s.toggleReread);
   const isPlaying = useAppStore((s) => s.isPlaying);
   const currentPlayingId = useAppStore((s) => s.currentPlayingId);
+  const unassignedCount = useAppStore(selectUnassignedCount);
+  const navigate = useNavigate();
 
   const allSentences = useAppStore(selectAllSentences);
   const [ttsReady, setTtsReady] = useState(false);
   const [scope, setScope] = useState<'all' | 'chapter'>('chapter');
   const [volume, setVolume] = useState(1.0);
   const [playIndex, setPlayIndex] = useState<number>(-1);
+  const [showDeliveryDialog, setShowDeliveryDialog] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stopFlagRef = useRef(false);
+
+  useEffect(() => {
+    const handler = () => {
+      const first =
+        allSentences.find((s) => !s.character)?.id || null;
+      if (first) selectSentence(first);
+      navigate('/dubbing');
+    };
+    window.addEventListener('navigate-dubbing', handler);
+    return () => window.removeEventListener('navigate-dubbing', handler);
+  }, [navigate, allSentences, selectSentence]);
 
   useEffect(() => {
     loadVoices().then((v) => setTtsReady(v.length > 0));
@@ -193,6 +215,15 @@ export default function ExportPage() {
 
   return (
     <div className="space-y-5">
+      {/* 交付包摘要卡 */}
+      <DeliveryOverviewCard
+        chapters={chapters}
+        currentChapterId={currentChapterId}
+        scope={scope}
+        onOpenDelivery={() => setShowDeliveryDialog(true)}
+        characterVoices={characterVoices}
+      />
+
       {/* 播放器栏 */}
       <motion.section
         initial={{ opacity: 0, y: -10 }}
@@ -341,63 +372,80 @@ export default function ExportPage() {
             </button>
           </div>
 
-          <div className="relative">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowExportMenu((v) => !v)}
-              className="btn-accent"
+              onClick={() => setShowDeliveryDialog(true)}
+              className="btn-accent !px-5 flex items-center gap-2"
             >
-              <Download size={17} />
-              导出配音材料
+              <Package size={17} />
+              🎁 打包交付
+              <span className="ml-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-white/20 text-white/90">
+                6合1
+              </span>
             </button>
-            {showExportMenu && (
-              <motion.div
-                initial={{ opacity: 0, y: -6, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                className="absolute top-full mt-2 right-0 w-56 bg-white rounded-2xl shadow-card border border-ink-100 p-1.5 z-20"
+            <div className="relative">
+              <button
+                onClick={() => setShowExportMenu((v) => !v)}
+                className="btn-secondary !px-3 flex items-center gap-1.5"
               >
-                <MenuItem
-                  icon={<FileJson size={16} />}
-                  title="导出 JSON"
-                  desc="结构化配音数据"
-                  accent="#3b82f6"
-                  onClick={() => {
-                    exportDubbListJSON(chapters);
-                    setShowExportMenu(false);
-                  }}
-                />
-                <MenuItem
-                  icon={<FileSpreadsheet size={16} />}
-                  title="导出 CSV"
-                  desc="Excel 可直接打开"
-                  accent="#10b981"
-                  onClick={() => {
-                    exportDubbListCSV(chapters);
-                    setShowExportMenu(false);
-                  }}
-                />
-                <MenuItem
-                  icon={<FileText size={16} />}
-                  title="导出 Markdown"
-                  desc="可预览的表格文档"
-                  accent="#8b5cf6"
-                  onClick={() => {
-                    exportDubbMarkdown(chapters);
-                    setShowExportMenu(false);
-                  }}
-                />
-                <div className="h-px bg-ink-100 my-1" />
-                <MenuItem
-                  icon={<BookOpenCheck size={16} />}
-                  title="导出汇总报告"
-                  desc="项目统计文本"
-                  accent="#d97706"
-                  onClick={() => {
-                    exportSummaryReport(chapters);
-                    setShowExportMenu(false);
-                  }}
-                />
-              </motion.div>
-            )}
+                <ChevronDown size={15} className={cn(showExportMenu && 'rotate-180')} />
+                <span className="text-xs">单项导出</span>
+              </button>
+              {showExportMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  className="absolute top-full mt-2 right-0 w-56 bg-white rounded-2xl shadow-card border border-ink-100 p-1.5 z-20"
+                >
+                  <div className="px-3 py-2 border-b border-ink-100 mb-1">
+                    <p className="text-[11px] text-ink-500 font-medium">
+                      单独导出某一类型
+                    </p>
+                  </div>
+                  <MenuItem
+                    icon={<FileJson size={16} />}
+                    title="配音清单 JSON"
+                    desc="结构化配音数据"
+                    accent="#3b82f6"
+                    onClick={() => {
+                      exportDubbListJSON(chapters);
+                      setShowExportMenu(false);
+                    }}
+                  />
+                  <MenuItem
+                    icon={<FileSpreadsheet size={16} />}
+                    title="配音清单 CSV"
+                    desc="Excel 可直接打开"
+                    accent="#10b981"
+                    onClick={() => {
+                      exportDubbListCSV(chapters);
+                      setShowExportMenu(false);
+                    }}
+                  />
+                  <MenuItem
+                    icon={<FileText size={16} />}
+                    title="配音清单 Markdown"
+                    desc="可预览的表格文档"
+                    accent="#8b5cf6"
+                    onClick={() => {
+                      exportDubbMarkdown(chapters);
+                      setShowExportMenu(false);
+                    }}
+                  />
+                  <div className="h-px bg-ink-100 my-1" />
+                  <MenuItem
+                    icon={<BookOpenCheck size={16} />}
+                    title="项目汇总报告"
+                    desc="纯文本统计摘要"
+                    accent="#d97706"
+                    onClick={() => {
+                      exportSummaryReport(chapters);
+                      setShowExportMenu(false);
+                    }}
+                  />
+                </motion.div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -647,6 +695,16 @@ export default function ExportPage() {
           </div>
         </motion.div>
       </div>
+      <DeliveryDialog
+        open={showDeliveryDialog}
+        onClose={() => setShowDeliveryDialog(false)}
+        chapters={chapters}
+        currentChapterId={currentChapterId}
+        currentChapterTitle={
+          chapters.find((c) => c.id === currentChapterId)?.title || ''
+        }
+        characterVoices={characterVoices}
+      />
     </div>
   );
 }
@@ -836,5 +894,185 @@ function PlaylistRow({
         )}
       </div>
     </motion.div>
+  );
+}
+
+function DeliveryOverviewCard({
+  chapters,
+  currentChapterId,
+  scope,
+  onOpenDelivery,
+  characterVoices,
+}: {
+  chapters: Chapter[];
+  currentChapterId: string | null;
+  scope: 'all' | 'chapter';
+  onOpenDelivery: () => void;
+  characterVoices: CharacterVoice[];
+}) {
+  const summary = useMemo(() => {
+    const opts = {
+      scope: (scope === 'all' ? 'all' : 'current') as 'current' | 'all',
+      chapters,
+      currentChapterId,
+      characterVoices,
+      includeRereadTags: true,
+      excludeUnassigned: false,
+      projectName: '',
+    };
+    return computeDeliverySummary(opts);
+  }, [chapters, currentChapterId, scope, characterVoices]);
+
+  const completeRate =
+    summary.sentenceCount === 0
+      ? 0
+      : Math.round(
+          ((summary.sentenceCount - summary.unassignedCount) /
+            summary.sentenceCount) *
+            100
+        );
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="card !p-5 overflow-hidden relative"
+    >
+      <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-midnight-500/5 via-ink-400/5 to-transparent rounded-full -translate-y-24 translate-x-24 blur-2xl" />
+      <div className="relative flex flex-wrap items-center gap-5 justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-midnight-500 via-ink-500 to-ink-400 flex items-center justify-center shadow-paper flex-shrink-0">
+            <Package size={24} className="text-white" />
+          </div>
+          <div>
+            <h3 className="font-song font-bold text-xl text-midnight-800 flex items-center gap-2">
+              交付包就绪
+              {completeRate === 100 && summary.unassignedCount === 0 ? (
+                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-normal">
+                  <CheckCircle2 size={11} />
+                  全部完成
+                </span>
+              ) : summary.unassignedCount > 0 ? (
+                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-normal animate-pulse-soft">
+                  <AlertTriangle size={11} />
+                  {summary.unassignedCount} 句待分配
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-midnight-50 text-midnight-700 border border-midnight-200 font-normal">
+                  <Sparkles size={11} />
+                  可导出
+                </span>
+              )}
+            </h3>
+            <p className="text-sm text-ink-500 mt-0.5">
+              当前范围：
+              <span className="font-medium text-midnight-700">
+                {scope === 'all'
+                  ? `全部 ${summary.chapterCount} 章`
+                  : chapters.find((c) => c.id === currentChapterId)?.title ||
+                    '未选择'}
+              </span>
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5 flex-1 min-w-[480px] max-w-[720px]">
+          <MiniStat
+            label="章节"
+            value={summary.chapterCount + '章'}
+            emoji="📚"
+          />
+          <MiniStat
+            label="句子"
+            value={summary.sentenceCount.toLocaleString()}
+            emoji="💬"
+          />
+          <MiniStat
+            label="字数"
+            value={summary.wordCount.toLocaleString()}
+            emoji="✍️"
+          />
+          <MiniStat
+            label="重读"
+            value={summary.rereadCount + '句'}
+            emoji="⭐"
+            accent={summary.rereadCount > 0 ? '#f59e0b' : undefined}
+          />
+          <MiniStat
+            label="未分配"
+            value={summary.unassignedCount + '句'}
+            emoji={summary.unassignedCount === 0 ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+            accent={
+              summary.unassignedCount === 0
+                ? '#10b981'
+                : '#ef4444'
+            }
+          />
+          <MiniStat
+            label="预计时长"
+            value={formatDuration(summary.estimatedDurationMs)}
+            emoji={<Clock size={12} />}
+            accent="#1e3a5f"
+          />
+        </div>
+
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="w-28">
+            <div className="flex items-center justify-between text-[10px] text-ink-500 mb-1">
+              <span>配音完成度</span>
+              <span className="font-bold text-midnight-700">{completeRate}%</span>
+            </div>
+            <div className="h-2 bg-ink-100 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full rounded-full"
+                initial={{ width: 0 }}
+                animate={{ width: `${completeRate}%` }}
+                style={{
+                  backgroundImage:
+                    completeRate === 100
+                      ? 'linear-gradient(90deg,#10b981,#34d399)'
+                      : 'linear-gradient(90deg,#1e3a5f,#d4a574)',
+                }}
+                transition={{ duration: 0.6 }}
+              />
+            </div>
+          </div>
+          <button
+            onClick={onOpenDelivery}
+            className="btn-accent !py-2.5 !px-5 flex items-center gap-2 text-sm"
+          >
+            <Download size={15} />
+            🎁 导出交付包
+          </button>
+        </div>
+      </div>
+    </motion.section>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+  emoji,
+  accent,
+}: {
+  label: string;
+  value: string;
+  emoji: React.ReactNode;
+  accent?: string;
+}) {
+  return (
+    <div className="px-3 py-2 rounded-xl bg-ink-50/70 border border-ink-100 min-w-[88px]">
+      <div className="flex items-center gap-1 text-[10px] text-ink-500 mb-0.5">
+        <span className="text-[11px] leading-none">{emoji}</span>
+        {label}
+      </div>
+      <p
+        className="font-song font-bold text-sm tabular-nums"
+        style={{ color: accent || '#1e3a5f' }}
+      >
+        {value}
+      </p>
+    </div>
   );
 }

@@ -17,6 +17,7 @@ import { CHARACTER_LIST, VOICE_STYLES, DEFAULT_CHARACTER_VOICES } from '@/consta
 import { useAppStore, selectCurrentChapter } from '@/store/useAppStore';
 import type { Sentence, CharacterType, VoiceStyle } from '@/types';
 import { speakSentence, cancelSpeak, computeEffectiveParams, loadVoices } from '@/utils/tts';
+import { useAutoPreview } from '@/utils/useAutoPreview';
 
 interface Props {
   focused: Sentence | null;
@@ -44,6 +45,9 @@ export default function ParameterPanel({ focused }: Props) {
 
   const [ttsReady, setTtsReady] = useState(false);
   const [tab, setTab] = useState<'sentence' | 'role'>('sentence');
+  const [autoPreviewId, setAutoPreviewId] = useState<string | null>(null);
+
+  const { schedule: scheduleAutoPreview, stopNow: stopAutoPreview } = useAutoPreview(characterVoices);
 
   useEffect(() => {
     loadVoices().then((v) => setTtsReady(v.length > 0));
@@ -58,7 +62,15 @@ export default function ParameterPanel({ focused }: Props) {
 
   const handleUpdate = <K extends keyof Sentence>(key: K, value: Sentence[K]) => {
     if (!sentence) return;
+    const patched = { ...sentence, [key]: value };
     updateSentence(sentence.id, { [key]: value });
+    if (key === 'rate' || key === 'pitch' || key === 'emotionLevel' || key === 'pauseBefore') {
+      setAutoPreviewId(sentence.id);
+      scheduleAutoPreview(patched as Sentence, {
+        delay: 380,
+        onEnd: () => setAutoPreviewId((id) => (id === sentence.id ? null : id)),
+      });
+    }
   };
 
   const handleReset = () => {
@@ -73,6 +85,7 @@ export default function ParameterPanel({ focused }: Props) {
 
   const handlePlay = async () => {
     if (!sentence) return;
+    stopAutoPreview();
     if (currentPlayingId === sentence.id) {
       cancelSpeak();
       setPlaying(false, null);
@@ -87,13 +100,38 @@ export default function ParameterPanel({ focused }: Props) {
   const handleRoleStyle = (character: CharacterType, style: VoiceStyle) => {
     const current = characterVoices.find((c) => c.character === character);
     if (!current) return;
-    setCharacterVoice(character, {
-      style: current.style === style ? null : style,
-    });
+    const nextStyle = current.style === style ? null : style;
+    setCharacterVoice(character, { style: nextStyle });
+    if (sentence && (sentence.character === character || !sentence.character)) {
+      const patched = {
+        ...sentence,
+        voiceStyle: sentence.voiceStyle || nextStyle,
+      };
+      setAutoPreviewId(sentence.id);
+      scheduleAutoPreview(patched, {
+        delay: 320,
+        onEnd: () => setAutoPreviewId((id) => (id === sentence.id ? null : id)),
+      });
+    }
   };
 
   const handleBulkAssign = (type: 'dialogue' | 'narration' | 'title', character: CharacterType) => {
     bulkAssignCharacter(type, character);
+    if (sentence && sentence.type === type) {
+      const voiceCfg = characterVoices.find((c) => c.character === character);
+      const patched: Sentence = {
+        ...sentence,
+        character,
+        voiceStyle: sentence.voiceStyle || voiceCfg?.style || null,
+      };
+      setTimeout(() => {
+        setAutoPreviewId(sentence.id);
+        scheduleAutoPreview(patched, {
+          delay: 280,
+          onEnd: () => setAutoPreviewId((id) => (id === sentence.id ? null : id)),
+        });
+      }, 60);
+    }
   };
 
   const isPlaying = sentence && currentPlayingId === sentence.id;

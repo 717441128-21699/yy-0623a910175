@@ -10,10 +10,12 @@ import {
   Sparkles,
   User,
   Star,
+  Volume2,
 } from 'lucide-react';
 import { useAppStore, selectCurrentChapter } from '@/store/useAppStore';
 import type { Sentence, CharacterType, VoiceStyle } from '@/types';
 import { speakSentence, cancelSpeak, loadVoices } from '@/utils/tts';
+import { useAutoPreview } from '@/utils/useAutoPreview';
 import { useState, useEffect, useRef } from 'react';
 
 interface Props {
@@ -35,7 +37,10 @@ export default function SentenceList({ onFocusSentence }: Props) {
   const [splitTarget, setSplitTarget] = useState<string | null>(null);
   const [splitAt, setSplitAt] = useState(0);
   const [mergeMode, setMergeMode] = useState<string | null>(null);
+  const [autoPreviewId, setAutoPreviewId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const { schedule: scheduleAutoPreview, stopNow: stopAutoPreview } = useAutoPreview(characterVoices);
 
   useEffect(() => {
     loadVoices().then((v) => setTtsReady(v.length > 0));
@@ -48,6 +53,7 @@ export default function SentenceList({ onFocusSentence }: Props) {
   }, [selectedId]);
 
   const handlePlay = async (s: Sentence) => {
+    stopAutoPreview();
     if (currentPlayingId === s.id) {
       cancelSpeak();
       setPlaying(false, null);
@@ -61,14 +67,31 @@ export default function SentenceList({ onFocusSentence }: Props) {
 
   const handleAssign = (s: Sentence, character: CharacterType) => {
     const voiceCfg = characterVoices.find((c) => c.character === character);
+    const patched: Sentence = {
+      ...s,
+      character,
+      voiceStyle: voiceCfg?.style || s.voiceStyle,
+    };
     updateSentence(s.id, {
       character,
       voiceStyle: voiceCfg?.style || s.voiceStyle,
     });
+    setAutoPreviewId(s.id);
+    scheduleAutoPreview(patched, {
+      delay: 320,
+      onEnd: () => setAutoPreviewId((id) => (id === s.id ? null : id)),
+    });
   };
 
   const handleStyle = (s: Sentence, style: VoiceStyle) => {
-    updateSentence(s.id, { voiceStyle: style });
+    const next = style === s.voiceStyle ? null : style;
+    const patched: Sentence = { ...s, voiceStyle: next };
+    updateSentence(s.id, { voiceStyle: next });
+    setAutoPreviewId(s.id);
+    scheduleAutoPreview(patched, {
+      delay: 320,
+      onEnd: () => setAutoPreviewId((id) => (id === s.id ? null : id)),
+    });
   };
 
   const confirmSplit = (s: Sentence) => {
@@ -444,6 +467,12 @@ export default function SentenceList({ onFocusSentence }: Props) {
                     </div>
 
                     <div className="flex-shrink-0 flex flex-col items-end gap-1 pl-2">
+                      {autoPreviewId === s.id && !isPlaying && (
+                        <div className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-midnight-600 text-white shadow-sm animate-pulse-soft">
+                          <Volume2 size={10} className="animate-pulse-soft" />
+                          自动预听
+                        </div>
+                      )}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -454,6 +483,8 @@ export default function SentenceList({ onFocusSentence }: Props) {
                           'w-8 h-8 rounded-full flex items-center justify-center transition-all',
                           isPlaying
                             ? 'bg-role-villain text-white shadow-paper'
+                            : autoPreviewId === s.id
+                            ? 'bg-midnight-600 text-white shadow-paper ring-2 ring-midnight-300'
                             : 'bg-ink-50 text-ink-500 hover:bg-midnight-600 hover:text-white border border-ink-100'
                         )}
                       >
